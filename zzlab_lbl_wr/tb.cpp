@@ -59,7 +59,9 @@ int main () {
 	ap_uint<DST_PTR_WIDTH>* pDstY1 = pDstY0 + ((nDstStridePC * nHeight) >> 1);
 	ap_uint<DST_PTR_WIDTH>* pDstUV1 = pDstUV0 + ((nDstStridePC * nHeight) >> 1);
 	ap_uint<32> nControl = FORMAT_NV16;
+	ap_uint<32> nStatus;
 
+#if 1
 	lbl_wr(
 		in_Axis,
 		pDstY0,
@@ -70,7 +72,11 @@ int main () {
 		nDstStride,
 		nWidth,
 		nHeight,
-		nControl);
+		nControl,
+		nStatus);
+#endif
+
+	std::cout << "nStatus=" << nStatus << std::endl;
 
 	std::cout << "output: (" << nDstStride << 'x' << nHeight*2 << ")" << std::endl;
 	for(int i = 0;i < nHeight * 2;i++) {

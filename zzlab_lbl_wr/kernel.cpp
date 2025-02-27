@@ -17,7 +17,8 @@ void axis_to_src_strm(
 	axis_pixel_stream_t& s_axis,
 	src_pixel_stream_t& strm0,
 	ap_uint<32> nWidth_2,
-	ap_uint<32> nHeight)
+	ap_uint<32> nHeight,
+	hls::stream<ap_uint<32> >& strmRes)
 {
     ap_uint<32> res = 0;
 	axis_pixel_t axi;
@@ -69,6 +70,8 @@ loop_wait_for_eol:
 			res |= ERROR_IO_EOL_LATE;
 		}
 	}
+
+	strmRes.write(res);
 }
 
 void src_strm_sink(
@@ -118,7 +121,7 @@ loop_height:
 
 loop_width:
 		for (ap_uint<32> j = 0;j < nWidthPC;j++) {
-#pragma HLS PIPELINE II=8 rewind
+#pragma HLS PIPELINE II=8
 
 			for(int t = 0;t < DST_TO_SRC_NPPC;t++) {
 #pragma HLS UNROLL factor=8
@@ -169,6 +172,16 @@ inline void mem_write_request(
 	}
 }
 
+inline void mem_write_request_nv16(
+	hls::burst_maxi<dst_pixel_t>& pDstY,
+	hls::burst_maxi<dst_pixel_t>& pDstUV,
+	ap_uint<32> nPos_dstY,
+	ap_uint<32> nPos_dstUV,
+	ap_uint<32> nWidthPC) {
+	pDstY.write_request(nPos_dstY, nWidthPC);
+	pDstUV.write_request(nPos_dstUV, nWidthPC);
+}
+
 inline void mem_write_response(
 	hls::burst_maxi<dst_pixel_t>& pDstY0,
 	hls::burst_maxi<dst_pixel_t>& pDstUV0,
@@ -187,6 +200,13 @@ inline void mem_write_response(
 			break;
 		}
 	}
+}
+
+inline void mem_write_response_nv16(
+	hls::burst_maxi<dst_pixel_t>& pDstY,
+	hls::burst_maxi<dst_pixel_t>& pDstUV) {
+	pDstY.write_response();
+	pDstUV.write_response();
 }
 
 inline void src_to_luma_chroma(const src_pixel_t& src, int t, dst_pixel_t& luma, dst_pixel_t& chroma) {
@@ -232,7 +252,228 @@ inline void luma_chroma_to_mem(
 	}
 }
 
+inline void luma_chroma_to_mem_nv16(
+	const dst_pixel_t& luma,
+	const dst_pixel_t& chroma,
+	hls::burst_maxi<dst_pixel_t>& pDstY,
+	hls::burst_maxi<dst_pixel_t>& pDstUV) {
+	pDstY.write(luma);
+	pDstUV.write(chroma);
+}
+
+void luma_chroma_dst_strm_to_mem_even(
+	dst_pixel_stream_t& strm0,
+	dst_pixel_stream_t& strm1,
+	hls::burst_maxi<dst_pixel_t>& pDstY,
+	hls::burst_maxi<dst_pixel_t>& pDstUV,
+	ap_uint<32> nWidthPC,
+	ap_uint<32> nHeight_2,
+	ap_uint<32> nDstStrideY_PC,
+	ap_uint<32> nDstStrideUV_PC) {
+	dst_pixel_t luma;
+	dst_pixel_t chroma;
+	ap_uint<32> nPos_dstY = 0, nPos_dstUV = 0;
+	ap_uint<32> i, j;
+
+loop_height:
+	for(i = 0; i < nHeight_2;i++) {
+		pDstY.write_request(nPos_dstY, nWidthPC);
+		pDstUV.write_request(nPos_dstUV, nWidthPC);
+
+loop_width:
+		for(j = 0;j < nWidthPC;j++) {
+			strm0 >> luma;
+			strm1 >> chroma;
+
+			pDstY.write(luma);
+			pDstUV.write(chroma);
+		}
+		pDstY.write_response();
+		pDstUV.write_response();
+
+		nPos_dstY += nDstStrideY_PC;
+		nPos_dstUV += nDstStrideUV_PC;
+	}
+}
+
+void luma_chroma_dst_strm_to_mem_odd(
+	dst_pixel_stream_t& strm0,
+	dst_pixel_stream_t& strm1,
+	hls::burst_maxi<dst_pixel_t>& pDstY,
+	hls::burst_maxi<dst_pixel_t>& pDstUV,
+	ap_uint<32> nWidthPC,
+	ap_uint<32> nHeight_2,
+	ap_uint<32> nDstStrideY_PC,
+	ap_uint<32> nDstStrideUV_PC,
+	ap_uint<32> nFormat) {
+	dst_pixel_t luma;
+	dst_pixel_t chroma;
+	ap_uint<32> nPos_dstY = 0, nPos_dstUV = 0;
+	ap_uint<32> i, j;
+
+loop_height:
+	for(i = 0; i < nHeight_2;i++) {
+		pDstY.write_request(nPos_dstY, nWidthPC);
+		switch(nFormat) {
+		case FORMAT_NV16:
+			pDstUV.write_request(nPos_dstUV, nWidthPC);
+			break;
+		}
+
+loop_width:
+		for(j = 0;j < nWidthPC;j++) {
+			strm0 >> luma;
+			strm1 >> chroma;
+
+			pDstY.write(luma);
+			switch(nFormat) {
+			case FORMAT_NV16:
+				pDstUV.write(chroma);
+				break;
+			}
+		}
+		pDstY.write_response();
+		switch(nFormat) {
+		case FORMAT_NV16:
+			pDstUV.write_response();
+			break;
+		}
+
+		nPos_dstY += nDstStrideY_PC;
+		nPos_dstUV += nDstStrideUV_PC;
+	}
+}
+
+void src_strm_to_luma_chroma_dst_strm(
+	src_pixel_stream_t& strm0,
+	dst_pixel_stream_t& strm1,
+	dst_pixel_stream_t& strm2,
+	dst_pixel_stream_t& strm3,
+	dst_pixel_stream_t& strm4,
+	ap_uint<32> nWidthPC,
+	ap_uint<32> nHeight) {
+	dst_pixel_t luma;
+	dst_pixel_t chroma;
+	ap_uint<32> i, j;
+	bool bEven = true;
+
+loop_height:
+	for(i = 0; i < nHeight;i++) {
+loop_width:
+		for(j = 0;j < nWidthPC;j++) {
+			src_strm_to_luma_chroma(strm0, luma, chroma);
+
+			if(bEven) {
+				strm1 << luma;
+				strm2 << chroma;
+			} else {
+				strm3 << luma;
+				strm4 << chroma;
+			}
+		}
+
+		bEven = bEven ? false : true;
+	}
+}
+
+void dst_strm_to_mem(
+	dst_pixel_stream_t& strm1,
+	dst_pixel_stream_t& strm2,
+	ap_uint<DST_PTR_WIDTH>* pDstY0,
+	ap_uint<DST_PTR_WIDTH>* pDstUV0,
+	ap_uint<DST_PTR_WIDTH>* pDstY1,
+	ap_uint<DST_PTR_WIDTH>* pDstUV1,
+	ap_uint<32> nWidthPC,
+	ap_uint<32> nHeight,
+	ap_uint<32> nDstStrideY_PC,
+	ap_uint<32> nDstStrideUV_PC,
+	ap_uint<32> nFormat) {
+	dst_pixel_t luma, chroma;
+	ap_uint<32> nPos_dstY0 = 0, nPos_dstUV0 = 0, nPos_dstY1 = 0, nPos_dstUV1 = 0;
+	bool bEven = true;
+
+loop_height:
+	for (ap_uint<32> i = 0; i < nHeight;i++) {
+loop_width:
+		for (ap_uint<32> j = 0;j < nWidthPC;j++) {
+			strm1 >> luma;
+			strm2 >> chroma;
+
+			if(bEven) {
+				pDstY0[nPos_dstY0 + j] = luma;
+				pDstUV0[nPos_dstUV0 + j] = chroma;
+			} else {
+				pDstY1[nPos_dstY1 + j] = luma;
+				switch(nFormat) {
+				case FORMAT_NV16:
+					pDstUV1[nPos_dstUV1 + j] = chroma;
+					break;
+				}
+			}
+		}
+
+		if(bEven) {
+			nPos_dstY0 += nDstStrideY_PC;
+			nPos_dstUV0 += nDstStrideUV_PC;
+		} else {
+			nPos_dstY1 += nDstStrideY_PC;
+			nPos_dstUV1 += nDstStrideUV_PC;
+		}
+
+		bEven = bEven ? false : true;
+	}
+}
+
+void src_strm_to_mem_v0(
+	src_pixel_stream_t& strm0,
+	ap_uint<DST_PTR_WIDTH>* pDstY0,
+	ap_uint<DST_PTR_WIDTH>* pDstUV0,
+	ap_uint<DST_PTR_WIDTH>* pDstY1,
+	ap_uint<DST_PTR_WIDTH>* pDstUV1,
+	ap_uint<32> nWidthPC,
+	ap_uint<32> nHeight,
+	ap_uint<32> nDstStrideY_PC,
+	ap_uint<32> nDstStrideUV_PC,
+	ap_uint<32> nFormat) {
+	dst_pixel_stream_t strm1("strm1");
+	dst_pixel_stream_t strm2("strm2");
+
+#pragma HLS DATAFLOW
+	src_strm_to_dst_strm(strm0, strm1, strm2, nWidthPC, nHeight);
+
+#if 1
+	dst_strm_to_mem(strm1, strm2, pDstY0, pDstUV0, pDstY1, pDstUV1,
+		nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
+#else
+	dst_strm_sink(strm1, nWidthPC, nHeight);
+	dst_strm_sink(strm2, nWidthPC, nHeight);
+#endif
+}
+
 void src_strm_to_mem_v1(
+	src_pixel_stream_t& strm0,
+	hls::burst_maxi<dst_pixel_t>& pDstY0,
+	hls::burst_maxi<dst_pixel_t>& pDstUV0,
+	hls::burst_maxi<dst_pixel_t>& pDstY1,
+	hls::burst_maxi<dst_pixel_t>& pDstUV1,
+	ap_uint<32> nWidthPC,
+	ap_uint<32> nHeight,
+	ap_uint<32> nDstStrideY_PC,
+	ap_uint<32> nDstStrideUV_PC,
+	ap_uint<32> nFormat) {
+	ap_uint<32> nHeight_2 = nHeight >> 1;
+	dst_pixel_stream_t strm1("strm1");
+	dst_pixel_stream_t strm2("strm2");
+	dst_pixel_stream_t strm3("strm3");
+	dst_pixel_stream_t strm4("strm4");
+
+#pragma HLS DATAFLOW
+	src_strm_to_luma_chroma_dst_strm(strm0, strm1, strm2, strm3, strm4, nWidthPC, nHeight);
+	luma_chroma_dst_strm_to_mem_even(strm1, strm2, pDstY0, pDstUV0, nWidthPC, nHeight_2, nDstStrideY_PC, nDstStrideUV_PC);
+	luma_chroma_dst_strm_to_mem_odd(strm3, strm4, pDstY1, pDstUV1, nWidthPC, nHeight_2, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
+}
+
+void src_strm_to_mem_v2(
 	src_pixel_stream_t& strm0,
 	hls::burst_maxi<dst_pixel_t>& pDstY0,
 	hls::burst_maxi<dst_pixel_t>& pDstUV0,
@@ -328,122 +569,32 @@ loop_width:
 	}
 }
 
-void luma_chroma_dst_strm_to_mem_even(
-	dst_pixel_stream_t& strm0,
-	dst_pixel_stream_t& strm1,
-	hls::burst_maxi<dst_pixel_t>& pDstY,
-	hls::burst_maxi<dst_pixel_t>& pDstUV,
+void src_strm_to_mem_v4(
+	src_pixel_stream_t& strm0,
+	ap_uint<DST_PTR_WIDTH>* pDstY0,
+	ap_uint<DST_PTR_WIDTH>* pDstUV0,
+	ap_uint<DST_PTR_WIDTH>* pDstY1,
+	ap_uint<DST_PTR_WIDTH>* pDstUV1,
 	ap_uint<32> nWidthPC,
-	ap_uint<32> nHeight_2,
-	ap_uint<32> nDstStrideY_PC,
-	ap_uint<32> nDstStrideUV_PC) {
-	dst_pixel_t luma;
-	dst_pixel_t chroma;
-	ap_uint<32> nPos_dstY = 0, nPos_dstUV = 0;
-	ap_uint<32> i, j;
-
-loop_height:
-	for(i = 0; i < nHeight_2;i++) {
-		pDstY.write_request(nPos_dstY, nWidthPC);
-		pDstUV.write_request(nPos_dstUV, nWidthPC);
-
-loop_width:
-		for(j = 0;j < nWidthPC;j++) {
-			strm0 >> luma;
-			strm1 >> chroma;
-
-			pDstY.write(luma);
-			pDstUV.write(chroma);
-		}
-		pDstY.write_response();
-		pDstUV.write_response();
-
-		nPos_dstY += nDstStrideY_PC;
-		nPos_dstUV += nDstStrideUV_PC;
-	}
-}
-
-void luma_chroma_dst_strm_to_mem_odd(
-	dst_pixel_stream_t& strm0,
-	dst_pixel_stream_t& strm1,
-	hls::burst_maxi<dst_pixel_t>& pDstY,
-	hls::burst_maxi<dst_pixel_t>& pDstUV,
-	ap_uint<32> nWidthPC,
-	ap_uint<32> nHeight_2,
+	ap_uint<32> nHeight,
 	ap_uint<32> nDstStrideY_PC,
 	ap_uint<32> nDstStrideUV_PC,
 	ap_uint<32> nFormat) {
-	dst_pixel_t luma;
-	dst_pixel_t chroma;
-	ap_uint<32> nPos_dstY = 0, nPos_dstUV = 0;
-	ap_uint<32> i, j;
+	int64_t nPos_dstY0 = 0, nPos_dstUV0 = 0;
+	int64_t nPos_dstY1 = 0, nPos_dstUV1 = 0;
 
-loop_height:
-	for(i = 0; i < nHeight_2;i++) {
-		pDstY.write_request(nPos_dstY, nWidthPC);
-		switch(nFormat) {
-		case FORMAT_NV16:
-			pDstUV.write_request(nPos_dstUV, nWidthPC);
-			break;
-		}
+	for(int i = 0;i < nWidthPC;i++) {
+		pDstY0[nPos_dstY0 + i] = i;
+		pDstUV0[nPos_dstUV0 + i] = i;
+	}
 
-loop_width:
-		for(j = 0;j < nWidthPC - 1;j++) {
-			strm0 >> luma;
-			strm1 >> chroma;
-
-			pDstY.write(luma);
-			switch(nFormat) {
-			case FORMAT_NV16:
-				pDstUV.write(chroma);
-				break;
-			}
-		}
-		pDstY.write_response();
-		switch(nFormat) {
-		case FORMAT_NV16:
-			pDstUV.write_response();
-			break;
-		}
-
-		nPos_dstY += nDstStrideY_PC;
-		nPos_dstUV += nDstStrideUV_PC;
+	for(int i = 0;i < nWidthPC;i++) {
+		pDstY1[nPos_dstY1 + i] = i;
+		pDstUV1[nPos_dstUV1 + i] = i;
 	}
 }
 
-void src_strm_to_luma_chroma_dst_strm(
-	src_pixel_stream_t& strm0,
-	dst_pixel_stream_t& strm1,
-	dst_pixel_stream_t& strm2,
-	dst_pixel_stream_t& strm3,
-	dst_pixel_stream_t& strm4,
-	ap_uint<32> nWidthPC,
-	ap_uint<32> nHeight) {
-	dst_pixel_t luma;
-	dst_pixel_t chroma;
-	ap_uint<32> i, j;
-	bool bEven = true;
-
-loop_height:
-	for(i = 0; i < nHeight;i++) {
-loop_width:
-		for(j = 0;j < nWidthPC;j++) {
-			src_strm_to_luma_chroma(strm0, luma, chroma);
-
-			if(bEven) {
-				strm1 << luma;
-				strm2 << chroma;
-			} else {
-				strm3 << luma;
-				strm4 << chroma;
-			}
-		}
-
-		bEven = !bEven;
-	}
-}
-
-void src_strm_to_mem_v2(
+void src_strm_to_mem_v5(
 	src_pixel_stream_t& strm0,
 	hls::burst_maxi<dst_pixel_t>& pDstY0,
 	hls::burst_maxi<dst_pixel_t>& pDstUV0,
@@ -454,156 +605,65 @@ void src_strm_to_mem_v2(
 	ap_uint<32> nDstStrideY_PC,
 	ap_uint<32> nDstStrideUV_PC,
 	ap_uint<32> nFormat) {
-	ap_uint<32> nHeight_2 = nHeight >> 1;
-	dst_pixel_stream_t strm1("strm1");
-	dst_pixel_stream_t strm2("strm2");
-	dst_pixel_stream_t strm3("strm3");
-	dst_pixel_stream_t strm4("strm4");
+	ap_uint<32> nPos_dstY0 = 0, nPos_dstUV0 = 0;
+	ap_uint<32> nPos_dstY1 = 0, nPos_dstUV1 = 0;
 
-#pragma HLS DATAFLOW
-	src_strm_to_luma_chroma_dst_strm(strm0, strm1, strm2, strm3, strm4, nWidthPC, nHeight);
-	luma_chroma_dst_strm_to_mem_even(strm1, strm2, pDstY0, pDstUV0, nWidthPC, nHeight_2, nDstStrideY_PC, nDstStrideUV_PC);
-	luma_chroma_dst_strm_to_mem_odd(strm3, strm4, pDstY1, pDstUV1, nWidthPC, nHeight_2, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
+	pDstY0.write_request(nPos_dstY1, nWidthPC);
+	pDstUV0.write_request(nPos_dstUV1, nWidthPC);
+	for(int i = 0;i < nWidthPC;i++) {
+		pDstY0.write(i);
+		pDstUV0.write(i);
+	}
+	pDstY0.write_response();
+	pDstUV0.write_response();
 }
 
-void dst_strm_to_mem_nv16(
-	dst_pixel_stream_t& strm1,
-	dst_pixel_stream_t& strm2,
-	ap_uint<DST_PTR_WIDTH>* pDstY0,
-	ap_uint<DST_PTR_WIDTH>* pDstY1,
-	ap_uint<DST_PTR_WIDTH>* pDstUV0,
-	ap_uint<DST_PTR_WIDTH>* pDstUV1,
-	ap_uint<32> nWidthPC,
-	ap_uint<32> nHeight_2,
-	ap_uint<32> nDstYSkip,
-	ap_uint<32> nDstUVSkip) {
-	dst_pixel_t luma, chroma;
-	ap_uint<32> nPos_dstY0 = 0, nPos_dstY1 = 0, nPos_dstUV0 = 0, nPos_dstUV1 = 0;
-
-loop_height:
-	for (ap_uint<32> i = 0; i < nHeight_2;i++, nPos_dstY0 += nDstYSkip, nPos_dstY1 += nDstYSkip, nPos_dstUV0 += nDstUVSkip, nPos_dstUV1 += nDstUVSkip) {
-
-loop_width_even:
-		for (ap_uint<32> j = 0;j < nWidthPC;j++, nPos_dstY0++, nPos_dstUV0++) {
-#pragma HLS PIPELINE II=2
-
-			strm1 >> luma;
-			strm2 >> chroma;
-
-			pDstY0[nPos_dstY0] = luma;
-			pDstUV0[nPos_dstUV0] = chroma;
-		}
-
-loop_width_odd:
-		for (ap_uint<32> j = 0;j < nWidthPC;j++, nPos_dstY1++, nPos_dstUV1++) {
-#pragma HLS PIPELINE II=2
-
-			strm1 >> luma;
-			strm2 >> chroma;
-
-			pDstY1[nPos_dstY1] = luma;
-			pDstUV1[nPos_dstUV1] = chroma;
-		}
-	}
-}
-
-void dst_strm_to_mem_nv12(
-	dst_pixel_stream_t& strm1,
-	dst_pixel_stream_t& strm2,
-	ap_uint<DST_PTR_WIDTH>* pDstY0,
-	ap_uint<DST_PTR_WIDTH>* pDstY1,
-	ap_uint<DST_PTR_WIDTH>* pDstUV0,
-	ap_uint<32> nWidthPC,
-	ap_uint<32> nHeight_2,
-	ap_uint<32> nDstYSkip,
-	ap_uint<32> nDstUVSkip) {
-	dst_pixel_t luma, chroma;
-	ap_uint<32> nPos_dstY0 = 0, nPos_dstY1 = 0, nPos_dstUV0 = 0;
-
-loop_height:
-	for (ap_uint<32> i = 0; i < nHeight_2;i++, nPos_dstY0 += nDstYSkip, nPos_dstY1 += nDstYSkip, nPos_dstUV0 += nDstUVSkip) {
-
-loop_width_even:
-		for (ap_uint<32> j = 0;j < nWidthPC;j++, nPos_dstY0++, nPos_dstUV0++) {
-#pragma HLS PIPELINE II=2
-
-			strm1 >> luma;
-			strm2 >> chroma;
-
-			pDstY0[nPos_dstY0] = luma;
-			pDstUV0[nPos_dstUV0] = chroma;
-		}
-
-loop_width_odd:
-		for (ap_uint<32> j = 0;j < nWidthPC;j++, nPos_dstY1++) {
-#pragma HLS PIPELINE II=2
-
-			strm1 >> luma;
-			strm2 >> chroma;
-
-			pDstY1[nPos_dstY1] = luma;
-		}
-	}
-}
-
-void dst_strm_to_mem(
-	dst_pixel_stream_t& strm1,
-	dst_pixel_stream_t& strm2,
-	ap_uint<DST_PTR_WIDTH>* pDstY0,
-	ap_uint<DST_PTR_WIDTH>* pDstY1,
-	ap_uint<DST_PTR_WIDTH>* pDstUV0,
-	ap_uint<DST_PTR_WIDTH>* pDstUV1,
-	ap_uint<32> nWidthPC,
-	ap_uint<32> nHeight_2,
-	ap_uint<32> nDstYSkip,
-	ap_uint<32> nDstUVSkip,
-	ap_uint<32> nControl) {
-	switch((nControl >> CTRL_FORMAT_BITSHIFT) & CTRL_FORMAT_MASK) {
-	case FORMAT_NV12:
-		dst_strm_to_mem_nv12(strm1, strm2, pDstY0, pDstY1, pDstUV0,
-			nWidthPC, nHeight_2, nDstYSkip, nDstUVSkip);
-		break;
-
-	case FORMAT_NV16:
-		dst_strm_to_mem_nv16(strm1, strm2, pDstY0, pDstY1, pDstUV0, pDstUV1,
-			nWidthPC, nHeight_2, nDstYSkip, nDstUVSkip);
-		break;
-
-	default:
-		break;
-	}
+void flush_res_strm(
+	hls::stream<ap_uint<32> >& strmRes,
+	ap_uint<32>& nStatus) {
+	strmRes.read(nStatus);
 }
 
 void lbl_wr(
 	axis_pixel_stream_t& s_axis,
+
+#if 1
+	ap_uint<DST_PTR_WIDTH>* pDstY0,
+	ap_uint<DST_PTR_WIDTH>* pDstUV0,
+	ap_uint<DST_PTR_WIDTH>* pDstY1,
+	ap_uint<DST_PTR_WIDTH>* pDstUV1,
+#endif
+
+#if 0
 	hls::burst_maxi<dst_pixel_t> pDstY0,
 	hls::burst_maxi<dst_pixel_t> pDstUV0,
 	hls::burst_maxi<dst_pixel_t> pDstY1,
 	hls::burst_maxi<dst_pixel_t> pDstUV1,
+#endif
+
 	ap_uint<32> nDstStrideY,
 	ap_uint<32> nDstStrideUV,
 	ap_uint<32> nWidth,
 	ap_uint<32> nHeight,
-	ap_uint<32> nControl) {
+	ap_uint<32> nControl,
+	ap_uint<32>& nStatus) {
 #pragma HLS INTERFACE axis port=s_axis register_mode=both
 #pragma HLS INTERFACE m_axi port=pDstY0 depth=48 offset=slave bundle=mm_video0
 #pragma HLS INTERFACE m_axi port=pDstUV0 depth=48 offset=slave bundle=mm_video1
-#pragma HLS INTERFACE m_axi port=pDstY1 depth=48 offset=slave bundle=mm_video2
-#pragma HLS INTERFACE m_axi port=pDstUV1 depth=48 offset=slave bundle=mm_video3
+#pragma HLS INTERFACE m_axi port=pDstY1 depth=48 offset=slave bundle=mm_video0
+#pragma HLS INTERFACE m_axi port=pDstUV1 depth=48 offset=slave bundle=mm_video1
 #pragma HLS INTERFACE s_axilite port=nDstStrideY
 #pragma HLS INTERFACE s_axilite port=nDstStrideUV
 #pragma HLS INTERFACE s_axilite port=nWidth
 #pragma HLS INTERFACE s_axilite port=nHeight
 #pragma HLS INTERFACE s_axilite port=nControl
+#pragma HLS INTERFACE s_axilite port=nStatus
 #pragma HLS INTERFACE s_axilite port=return
 
 	ap_uint<32> nWidthPC = nWidth >> DST_BITSHIFT;
 	ap_uint<32> nWidth_2 = (nWidth >> 1);
-	ap_uint<32> nHeight_2 = (nHeight >> 1);
 	ap_uint<32> nDstStrideY_PC = nDstStrideY >> DST_BITSHIFT;
 	ap_uint<32> nDstStrideUV_PC = nDstStrideUV >> DST_BITSHIFT;
-	ap_uint<32> nDstYSkip = nDstStrideY_PC - nWidthPC;
-	ap_uint<32> nDstUVSkip = nDstStrideUV_PC - nWidthPC;
 	ap_uint<32> nFormat = (nControl >> CTRL_FORMAT_BITSHIFT) & CTRL_FORMAT_MASK;
 
 #ifndef __SYNTHESIS__
@@ -614,41 +674,42 @@ void lbl_wr(
 	std::cout << "DST_BITSHIFT=" << DST_BITSHIFT << std::endl;
 	std::cout << "DST_TO_SRC_NPPC=" << DST_TO_SRC_NPPC << std::endl;
 	std::cout << nWidth << 'x' << nHeight << ',' << nDstStrideY << ',' << nDstStrideUV << std::endl;
-	std::cout << nWidthPC << 'x' << nHeight_2 << ',' << nDstYSkip << ',' << nDstUVSkip << std::endl;
+	std::cout << nWidthPC << ',' << nDstStrideY_PC << ',' << nDstStrideUV_PC << ',' << nFormat << std::endl;
 #endif
 
-	src_pixel_stream_t strm0("strm0");
-	dst_pixel_stream_t strm1("strm1");
-	dst_pixel_stream_t strm2("strm2");
-
-#pragma HLS STREAM variable=strm0
-#pragma HLS STREAM variable=strm1
-#pragma HLS STREAM variable=strm2
+ 	src_pixel_stream_t strm0("strm0");
+ 	hls::stream<ap_uint<32> > strmRes("strmRes");
 
 #pragma HLS DATAFLOW
-	axis_to_src_strm(s_axis, strm0, nWidth_2, nHeight);
-
-#if 0
-	src_strm_to_dst_strm(strm0, strm1, strm2, nWidthPC, nHeight);
+	axis_to_src_strm(s_axis, strm0, nWidth_2, nHeight, strmRes);
 
 #if 1
-	dst_strm_to_mem(strm1, strm2, pDstY0, pDstY1, pDstUV0, pDstUV1,
-		nWidthPC, nHeight_2, nDstYSkip, nDstUVSkip, nControl);
-#else
-	dst_strm_sink(strm1, nWidthPC, nHeight);
-	dst_strm_sink(strm2, nWidthPC, nHeight);
-#endif
+	// 2,616,890 ns
+	src_strm_to_mem_v0(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #endif
 
 #if 0
+	// 2,570,170 ns
 	src_strm_to_mem_v1(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #endif
 
 #if 0
+	// 3,812,610 ns
 	src_strm_to_mem_v2(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #endif
 
-#if 1
+#if 0
+	// 3,411,810 ns
 	src_strm_to_mem_v3(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #endif
+
+#if 0
+	src_strm_to_mem_v4(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
+#endif
+
+#if 0
+	src_strm_to_mem_v5(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
+#endif
+
+	flush_res_strm(strmRes, nStatus);
 }

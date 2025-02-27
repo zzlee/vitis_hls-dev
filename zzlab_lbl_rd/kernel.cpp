@@ -141,6 +141,30 @@ void luma_chroma_to_axis(
 	s_axis.write(axi[SRC_TO_DST_NPPC - 1]);
 }
 
+void mem_to_axis_v0(
+	ap_uint<SRC_PTR_WIDTH>* pSrcY0,
+	ap_uint<SRC_PTR_WIDTH>* pSrcY1,
+	ap_uint<SRC_PTR_WIDTH>* pSrcUV0,
+	ap_uint<SRC_PTR_WIDTH>* pSrcUV1,
+	axis_pixel_stream_t& s_axis,
+	ap_uint<32> nWidthPC,
+	ap_uint<32> nHeight,
+	ap_uint<32> nSrcStrideYPC,
+	ap_uint<32> nSrcStrideUVPC) {
+	ap_uint<32> nHeight_2 = (nHeight >> 1);
+	ap_uint<32> nSrcYSkip = nSrcStrideYPC - nWidthPC;
+	ap_uint<32> nSrcUVSkip = nSrcStrideUVPC - nWidthPC;
+
+	src_pixel_stream_t strm0("strm0");
+	src_pixel_stream_t strm1("strm1");
+
+#pragma HLS DATAFLOW
+	to_pixels_stream(pSrcY0, pSrcY1, pSrcUV0, pSrcUV1,
+		strm0, strm1, nWidthPC, nHeight_2,
+		nSrcYSkip, nSrcUVSkip);
+	to_axis(strm0, strm1, s_axis, nWidthPC, nHeight);
+}
+
 void mem_to_axis_v1(
 	hls::burst_maxi<src_pixel_t>& pSrcY0,
 	hls::burst_maxi<src_pixel_t>& pSrcY1,
@@ -252,20 +276,27 @@ loop_width:
 }
 
 void lbl_rd(
+#if 0
+	ap_uint<SRC_PTR_WIDTH>* pSrcY0,
+	ap_uint<SRC_PTR_WIDTH>* pSrcY1,
+	ap_uint<SRC_PTR_WIDTH>* pSrcUV0,
+	ap_uint<SRC_PTR_WIDTH>* pSrcUV1,
+#else
 	hls::burst_maxi<src_pixel_t> pSrcY0,
 	hls::burst_maxi<src_pixel_t> pSrcUV0,
 	hls::burst_maxi<src_pixel_t> pSrcY1,
 	hls::burst_maxi<src_pixel_t> pSrcUV1,
+#endif
 	ap_uint<32> nSrcStrideY,
 	ap_uint<32> nSrcStrideUV,
 	axis_pixel_stream_t& s_axis,
 	ap_uint<32> nWidth,
 	ap_uint<32> nHeight,
 	ap_uint<32> nControl) {
-#pragma HLS INTERFACE m_axi port=pSrcY0 offset=slave bundle=mm_video0
-#pragma HLS INTERFACE m_axi port=pSrcUV0 offset=slave bundle=mm_video1
-#pragma HLS INTERFACE m_axi port=pSrcY1 offset=slave bundle=mm_video2
-#pragma HLS INTERFACE m_axi port=pSrcUV1 offset=slave bundle=mm_video3
+#pragma HLS INTERFACE m_axi port=pSrcY0 depth=48 offset=slave bundle=mm_video0
+#pragma HLS INTERFACE m_axi port=pSrcUV0 depth=48 offset=slave bundle=mm_video1
+#pragma HLS INTERFACE m_axi port=pSrcY1 depth=48 offset=slave bundle=mm_video2
+#pragma HLS INTERFACE m_axi port=pSrcUV1 depth=48 offset=slave bundle=mm_video3
 #pragma HLS INTERFACE axis port=s_axis register_mode=both
 #pragma HLS INTERFACE s_axilite port=nSrcStrideY
 #pragma HLS INTERFACE s_axilite port=nSrcStrideUV
@@ -275,36 +306,26 @@ void lbl_rd(
 #pragma HLS INTERFACE s_axilite port=return
 
 	ap_uint<32> nWidthPC = nWidth >> SRC_BITSHIFT;
-	ap_uint<32> nHeight_2 = (nHeight >> 1);
 	ap_uint<32> nSrcStrideYPC = nSrcStrideY >> SRC_BITSHIFT;
-	ap_uint<32> nSrcYSkip = nSrcStrideYPC - nWidthPC;
 	ap_uint<32> nSrcStrideUVPC = nSrcStrideUV >> SRC_BITSHIFT;
-	ap_uint<32> nSrcUVSkip = nSrcStrideUVPC - nWidthPC;
 
 #ifndef __SYNTHESIS__
-	std::cout << __FUNCTION__ << ',' << nWidthPC << 'x' << nHeight_2 << ','
+	std::cout << __FUNCTION__ << ',' << nWidthPC << ','
 		<< nSrcStrideYPC << ',' << nSrcStrideUVPC << std::endl;
 #endif
 
 #if 0
-	src_pixel_stream_t strm0("strm0");
-	src_pixel_stream_t strm1("strm1");
-
-#pragma HLS STREAM variable=strm0
-#pragma HLS STREAM variable=strm1
-
-#pragma HLS DATAFLOW
-	to_pixels_stream(pSrcY0, pSrcY1, pSrcUV0, pSrcUV1,
-		strm0, strm1, nWidthPC, nHeight_2,
-		nSrcYSkip, nSrcUVSkip);
-	to_axis(strm0, strm1, s_axis, nWidthPC, nHeight);
+	// 2,192,710 ns
+	mem_to_axis_v0(pSrcY0, pSrcY1, pSrcUV0, pSrcUV1, s_axis, nWidthPC, nHeight, nSrcStrideYPC, nSrcStrideUVPC);
 #endif
 
 #if 0
+	// 3,254,830 ns
 	mem_to_axis_v1(pSrcY0, pSrcY1, pSrcUV0, pSrcUV1, s_axis, nWidthPC, nHeight, nSrcStrideYPC, nSrcStrideUVPC);
 #endif
 
 #if 1
+	// 2,934,190 ns
 	mem_to_axis_v2(pSrcY0, pSrcY1, pSrcUV0, pSrcUV1, s_axis, nWidthPC, nHeight, nSrcStrideYPC, nSrcStrideUVPC);
 #endif
 }
