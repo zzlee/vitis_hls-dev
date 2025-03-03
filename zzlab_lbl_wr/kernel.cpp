@@ -127,17 +127,17 @@ loop_width:
 #pragma HLS UNROLL factor=8
 				strm0 >> src;
 
-				luma.range(t*16 + 8*1-1, t*16 + 8*0) = src.range(8*1-1, 8*0); // Y0
-				luma.range(t*16 + 8*2-1, t*16 + 8*1) = src.range(8*4-1, 8*3); // Y1
+				luma(t*16 + 8*1-1, t*16 + 8*0) = src(8*1-1, 8*0); // Y0
+				luma(t*16 + 8*2-1, t*16 + 8*1) = src(8*4-1, 8*3); // Y1
 
 #if 1
-				chroma.range(t*16 + 8*1-1, t*16 + 8*0) =
-					(src.range(8*2-1, 8*1) + src.range(8*5-1, 8*4)) >> 1; // (U0 + U1) / 2
-				chroma.range(t*16 + 8*2-1, t*16 + 8*1) =
-					(src.range(8*3-1, 8*2) + src.range(8*6-1, 8*5)) >> 1; // (V0 + V1) / 2
+				chroma(t*16 + 8*1-1, t*16 + 8*0) =
+					(src(8*2-1, 8*1) + src(8*5-1, 8*4)) >> 1; // (U0 + U1) / 2
+				chroma(t*16 + 8*2-1, t*16 + 8*1) =
+					(src(8*3-1, 8*2) + src(8*6-1, 8*5)) >> 1; // (V0 + V1) / 2
 #else
-				chroma.range(t*16 + 8*1-1, t*16 + 8*0) = src.range(8*2-1, 8*1); // U0
-				chroma.range(t*16 + 8*2-1, t*16 + 8*1) = src.range(8*3-1, 8*2); // V0
+				chroma(t*16 + 8*1-1, t*16 + 8*0) = src(8*2-1, 8*1); // U0
+				chroma(t*16 + 8*2-1, t*16 + 8*1) = src(8*3-1, 8*2); // V0
 #endif
 			}
 
@@ -221,13 +221,13 @@ inline void src_strm_to_luma_chroma(src_pixel_stream_t& strm0, dst_pixel_t& luma
 
 	src_pixel_t src[DST_TO_SRC_NPPC];
 
-	strm0 >> src[0];
-	for(int t = 0;t < DST_TO_SRC_NPPC - 1;t++) {
-#pragma HLS UNROLL factor=7 skip_exit_check
-		strm0 >> src[t + 1];
+	for(int t = 0;t < DST_TO_SRC_NPPC;t++) {
 		src_to_luma_chroma(src[t], t, luma, chroma);
 	}
-	src_to_luma_chroma(src[DST_TO_SRC_NPPC - 1], DST_TO_SRC_NPPC - 1, luma, chroma);
+
+	for(int t = 0;t < DST_TO_SRC_NPPC;t++) {
+		strm0 >> src[t];
+	}
 }
 
 inline void luma_chroma_to_mem(
@@ -376,7 +376,7 @@ loop_width:
 	}
 }
 
-void dst_strm_to_mem(
+void dst_strm_to_mem_v0(
 	dst_pixel_stream_t& strm1,
 	dst_pixel_stream_t& strm2,
 	ap_uint<DST_PTR_WIDTH>* pDstY0,
@@ -424,6 +424,60 @@ loop_width:
 	}
 }
 
+void dst_strm_to_mem_v4(
+	dst_pixel_stream_t& strm1,
+	dst_pixel_stream_t& strm2,
+	ap_uint<DST_PTR_WIDTH>* pDstY0,
+	ap_uint<DST_PTR_WIDTH>* pDstUV0,
+	ap_uint<DST_PTR_WIDTH>* pDstY1,
+	ap_uint<DST_PTR_WIDTH>* pDstUV1,
+	ap_uint<32> nWidthPC,
+	ap_uint<32> nHeight,
+	ap_uint<32> nDstStrideY_PC,
+	ap_uint<32> nDstStrideUV_PC,
+	ap_uint<32> nFormat) {
+	dst_pixel_t luma[MAX_WIDTH >> DST_BITSHIFT];
+	dst_pixel_t chroma[MAX_WIDTH >> DST_BITSHIFT];
+	ap_uint<32> nPos_dstY0 = 0, nPos_dstUV0 = 0, nPos_dstY1 = 0, nPos_dstUV1 = 0;
+	bool bEven = true;
+
+loop_height:
+	for (ap_uint<32> i = 0; i < nHeight;i++) {
+loop_width_strm:
+		for (ap_uint<32> j = 0;j < nWidthPC;j++) {
+			strm1 >> luma[j];
+			strm2 >> chroma[j];
+		}
+
+#if 1
+loop_width_mem:
+		for (ap_uint<32> j = 0;j < nWidthPC;j++) {
+			if(bEven) {
+				pDstY0[nPos_dstY0 + j] = luma[j];
+				pDstUV0[nPos_dstUV0 + j] = chroma[j];
+			} else {
+				pDstY1[nPos_dstY1 + j] = luma[j];
+				switch(nFormat) {
+				case FORMAT_NV16:
+					pDstUV1[nPos_dstUV1 + j] = chroma[j];
+					break;
+				}
+			}
+		}
+#endif
+
+		if(bEven) {
+			nPos_dstY0 += nDstStrideY_PC;
+			nPos_dstUV0 += nDstStrideUV_PC;
+		} else {
+			nPos_dstY1 += nDstStrideY_PC;
+			nPos_dstUV1 += nDstStrideUV_PC;
+		}
+
+		bEven = bEven ? false : true;
+	}
+}
+
 void src_strm_to_mem_v0(
 	src_pixel_stream_t& strm0,
 	ap_uint<DST_PTR_WIDTH>* pDstY0,
@@ -442,7 +496,7 @@ void src_strm_to_mem_v0(
 	src_strm_to_dst_strm(strm0, strm1, strm2, nWidthPC, nHeight);
 
 #if 1
-	dst_strm_to_mem(strm1, strm2, pDstY0, pDstUV0, pDstY1, pDstUV1,
+	dst_strm_to_mem_v0(strm1, strm2, pDstY0, pDstUV0, pDstY1, pDstUV1,
 		nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #else
 	dst_strm_sink(strm1, nWidthPC, nHeight);
@@ -538,15 +592,14 @@ void src_strm_to_mem_v3(
 	ap_uint<32> nPos_dstY0 = 0, nPos_dstUV0 = 0;
 	ap_uint<32> nPos_dstY1 = 0, nPos_dstUV1 = 0;
 	bool bEven = true;
-	ap_uint<32> i, j;
 
 loop_height:
-	for(i = 0; i < nHeight;i++) {
+	for(ap_uint<32> i = 0; i < nHeight;i++) {
 		mem_write_request(pDstY0, pDstUV0, pDstY1, pDstUV1,
 			nPos_dstY0, nPos_dstUV0, nPos_dstY1, nPos_dstUV1, nWidthPC, bEven, nFormat);
 
 loop_width:
-		for(j = 0;j < nWidthPC;j++) {
+		for(ap_uint<32> j = 0;j < nWidthPC;j++) {
 			src_strm_to_luma_chroma(strm0, luma, chroma);
 			luma_chroma_to_mem(luma, chroma, pDstY0, pDstUV0, pDstY1, pDstUV1, bEven, nFormat);
 		}
@@ -558,11 +611,7 @@ loop_width:
 			nPos_dstUV0 += nDstStrideUV_PC;
 		} else {
 			nPos_dstY1 += nDstStrideY_PC;
-			switch(nFormat) {
-			case FORMAT_NV16:
-				nPos_dstUV1 += nDstStrideUV_PC;
-				break;
-			}
+			nPos_dstUV1 += nDstStrideUV_PC;
 		}
 
 		bEven = bEven ? false : true;
@@ -580,18 +629,13 @@ void src_strm_to_mem_v4(
 	ap_uint<32> nDstStrideY_PC,
 	ap_uint<32> nDstStrideUV_PC,
 	ap_uint<32> nFormat) {
-	int64_t nPos_dstY0 = 0, nPos_dstUV0 = 0;
-	int64_t nPos_dstY1 = 0, nPos_dstUV1 = 0;
+	dst_pixel_stream_t strm1("strm1");
+	dst_pixel_stream_t strm2("strm2");
 
-	for(int i = 0;i < nWidthPC;i++) {
-		pDstY0[nPos_dstY0 + i] = i;
-		pDstUV0[nPos_dstUV0 + i] = i;
-	}
-
-	for(int i = 0;i < nWidthPC;i++) {
-		pDstY1[nPos_dstY1 + i] = i;
-		pDstUV1[nPos_dstUV1 + i] = i;
-	}
+#pragma HLS DATAFLOW
+	src_strm_to_dst_strm(strm0, strm1, strm2, nWidthPC, nHeight);
+	dst_strm_to_mem_v4(strm1, strm2, pDstY0, pDstUV0, pDstY1, pDstUV1,
+		nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 }
 
 void src_strm_to_mem_v5(
@@ -627,14 +671,14 @@ void flush_res_strm(
 void lbl_wr(
 	axis_pixel_stream_t& s_axis,
 
-#if 1
+#if 0
 	ap_uint<DST_PTR_WIDTH>* pDstY0,
 	ap_uint<DST_PTR_WIDTH>* pDstUV0,
 	ap_uint<DST_PTR_WIDTH>* pDstY1,
 	ap_uint<DST_PTR_WIDTH>* pDstUV1,
 #endif
 
-#if 0
+#if 1
 	hls::burst_maxi<dst_pixel_t> pDstY0,
 	hls::burst_maxi<dst_pixel_t> pDstUV0,
 	hls::burst_maxi<dst_pixel_t> pDstY1,
@@ -650,8 +694,8 @@ void lbl_wr(
 #pragma HLS INTERFACE axis port=s_axis register_mode=both
 #pragma HLS INTERFACE m_axi port=pDstY0 depth=48 offset=slave bundle=mm_video0
 #pragma HLS INTERFACE m_axi port=pDstUV0 depth=48 offset=slave bundle=mm_video1
-#pragma HLS INTERFACE m_axi port=pDstY1 depth=48 offset=slave bundle=mm_video0
-#pragma HLS INTERFACE m_axi port=pDstUV1 depth=48 offset=slave bundle=mm_video1
+#pragma HLS INTERFACE m_axi port=pDstY1 depth=48 offset=slave bundle=mm_video2
+#pragma HLS INTERFACE m_axi port=pDstUV1 depth=48 offset=slave bundle=mm_video3
 #pragma HLS INTERFACE s_axilite port=nDstStrideY
 #pragma HLS INTERFACE s_axilite port=nDstStrideUV
 #pragma HLS INTERFACE s_axilite port=nWidth
@@ -683,7 +727,7 @@ void lbl_wr(
 #pragma HLS DATAFLOW
 	axis_to_src_strm(s_axis, strm0, nWidth_2, nHeight, strmRes);
 
-#if 1
+#if 0
 	// 2,616,890 ns
 	src_strm_to_mem_v0(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #endif
@@ -698,17 +742,13 @@ void lbl_wr(
 	src_strm_to_mem_v2(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #endif
 
-#if 0
-	// 3,411,810 ns
+#if 1
+	// 3,341,670 ns
 	src_strm_to_mem_v3(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #endif
 
 #if 0
 	src_strm_to_mem_v4(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
-#endif
-
-#if 0
-	src_strm_to_mem_v5(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #endif
 
 	flush_res_strm(strmRes, nStatus);

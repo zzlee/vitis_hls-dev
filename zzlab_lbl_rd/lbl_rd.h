@@ -33,15 +33,18 @@ typedef hls::stream<dst_pixel_t> dst_pixel_stream_t;
 extern void lbl_rd(
 #if 0
 	ap_uint<SRC_PTR_WIDTH>* pSrcY0,
-	ap_uint<SRC_PTR_WIDTH>* pSrcY1,
 	ap_uint<SRC_PTR_WIDTH>* pSrcUV0,
+	ap_uint<SRC_PTR_WIDTH>* pSrcY1,
 	ap_uint<SRC_PTR_WIDTH>* pSrcUV1,
-#else
+#endif
+
+#if 1
 	hls::burst_maxi<src_pixel_t> pSrcY0,
 	hls::burst_maxi<src_pixel_t> pSrcUV0,
 	hls::burst_maxi<src_pixel_t> pSrcY1,
 	hls::burst_maxi<src_pixel_t> pSrcUV1,
 #endif
+
 	ap_uint<32> nSrcStrideY,
 	ap_uint<32> nSrcStrideUV,
 	axis_pixel_stream_t& s_axis,
