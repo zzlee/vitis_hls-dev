@@ -565,11 +565,7 @@ loop_width:
 			nPos_dstUV0 += nDstStrideUV_PC;
 		} else {
 			nPos_dstY1 += nDstStrideY_PC;
-			switch(nFormat) {
-			case FORMAT_NV16:
-				nPos_dstUV1 += nDstStrideUV_PC;
-				break;
-			}
+			nPos_dstUV1 += nDstStrideUV_PC;
 		}
 
 		bEven = bEven ? false : true;
@@ -737,12 +733,12 @@ void lbl_wr(
 	src_strm_to_mem_v1(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #endif
 
-#if 0
+#if 1
 	// 3,812,610 ns
 	src_strm_to_mem_v2(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #endif
 
-#if 1
+#if 0
 	// 3,341,670 ns
 	src_strm_to_mem_v3(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #endif
