@@ -222,11 +222,11 @@ inline void src_strm_to_luma_chroma(src_pixel_stream_t& strm0, dst_pixel_t& luma
 	src_pixel_t src[DST_TO_SRC_NPPC];
 
 	for(int t = 0;t < DST_TO_SRC_NPPC;t++) {
-		src_to_luma_chroma(src[t], t, luma, chroma);
+		strm0 >> src[t];
 	}
 
 	for(int t = 0;t < DST_TO_SRC_NPPC;t++) {
-		strm0 >> src[t];
+		src_to_luma_chroma(src[t], t, luma, chroma);
 	}
 }
 
@@ -733,12 +733,12 @@ void lbl_wr(
 	src_strm_to_mem_v1(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #endif
 
-#if 1
+#if 0
 	// 3,812,610 ns
 	src_strm_to_mem_v2(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #endif
 
-#if 0
+#if 1
 	// 3,341,670 ns
 	src_strm_to_mem_v3(strm0, pDstY0, pDstUV0, pDstY1, pDstUV1, nWidthPC, nHeight, nDstStrideY_PC, nDstStrideUV_PC, nFormat);
 #endif

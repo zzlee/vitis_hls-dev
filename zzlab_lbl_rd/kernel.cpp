@@ -383,12 +383,12 @@ void lbl_rd(
 	mem_to_axis_v0(pSrcY0, pSrcUV0, pSrcY1, pSrcUV1, s_axis, nWidthPC, nHeight, nSrcStrideYPC, nSrcStrideUVPC);
 #endif
 
-#if 1
+#if 0
 	// 3,254,830 ns
 	mem_to_axis_v1(pSrcY0, pSrcUV0, pSrcY1, pSrcUV1, s_axis, nWidthPC, nHeight, nSrcStrideYPC, nSrcStrideUVPC);
 #endif
 
-#if 0
+#if 1
 	// 2,934,190 ns
 	mem_to_axis_v2(pSrcY0, pSrcUV0, pSrcY1, pSrcUV1, s_axis, nWidthPC, nHeight, nSrcStrideYPC, nSrcStrideUVPC);
 #endif
