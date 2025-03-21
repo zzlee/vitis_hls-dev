@@ -11,9 +11,10 @@ add_files -tb z_frmbuf_writer/tb.cpp -cflags "-I${XF_PROJ_ROOT}/L1/include -I ./
 
 # 2020.2
 open_solution "solution1" -flow_target vivado
-set_part {xczu4ev-fbvb900-2-e}
+# set_part {xczu4ev-fbvb900-2-e}
+set_part {xc7a50tcsg325-2}
 
-create_clock -period 3.33333 -name default
+create_clock -period 8 -name default
 csynth_design
 export_design -format ip_catalog -description "Z FrmBuf Writer" -vendor "ZzLab" -display_name "FrmBuf Writer"
 exit

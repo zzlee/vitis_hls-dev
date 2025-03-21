@@ -11,7 +11,8 @@ add_files -tb aximm_test1/tb.cpp -cflags "-I${XF_PROJ_ROOT}/L1/include -I ./ -D_
 
 # 2020.2
 open_solution "solution1" -flow_target vivado
-set_part {xczu4ev-fbvb900-2-e}
+# set_part {xczu4ev-fbvb900-2-e}
+set_part {xc7a50tcsg325-2}
 
 create_clock -period 3.33333 -name default
 csynth_design

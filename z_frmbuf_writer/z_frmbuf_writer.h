@@ -13,6 +13,12 @@
 #define PAGE_BITSHIFT				12
 #define PAGE_SIZE					(1 << PAGE_BITSHIFT)
 
+template <>
+struct StreamType<XF_240UW> {
+    typedef ap_uint<240> name;
+    static const int bitdepth = 240;
+};
+
 #define SRC_PIXEL_TYPE						XF_10UC3
 #define SRC_NPPC							XF_NPPC8
 #define SRC_WORD_WIDTH						XF_WORDDEPTH(XF_WORDWIDTH(SRC_PIXEL_TYPE, SRC_NPPC))
@@ -38,6 +44,11 @@ struct desc_item_t {
 };
 typedef hls::stream<desc_item_t> desc_item_stream_t;
 
+inline ap_int<64> offset_from_desc_item(const desc_item_t& oDescItem) {
+#pragma HLS INLINE
+	return (((ap_int<64>(oDescItem.nOffsetHigh) << 32) | ap_int<64>(oDescItem.nOffsetLow)));
+}
+
 extern void z_frmbuf_writer(
 	src_axi_stream_t& strmSrcAxi,
 
@@ -52,6 +63,8 @@ extern void z_frmbuf_writer(
 	ap_uint<32> nDstChromaStride,
 
 	ap_uint<32> nWidth,
-	ap_uint<32> nHeight);
+	ap_uint<32> nHeight,
+	ap_uint<32> nFormat,
+	ap_uint<32>& nAxisRes);
 
 #endif // __Z_FRMBUF_WRITER_H__
