@@ -21,39 +21,42 @@ int main () {
 	uint8_t* pDstBuf = &vSysMem[0]; // nStride * nHeight;
 	int64_t nDstBufSize = nStride * nHeight;
 
-	desc_item_t* pDescItems = (desc_item_t*)&vSysMem[PAGE_SIZE << 1];
-	ap_uint<32> nDescItemCount = 0;
+	desc_item_t* pDescBase = (desc_item_t*)&vSysMem[PAGE_SIZE << 4];
+	ap_uint<32> nDescItemCount = 1;
 	{
-		int i = 0;
-		int64_t nDescOffset;
-		int nDescItems = 3;
-
-		nDescOffset = int64_t((intptr_t)&pDescItems[i + 1] - (intptr_t)pDescItems);
-		pDescItems[i].nOffsetHigh = ((nDescOffset >> 32) & 0xFFFFFFFF);
-		pDescItems[i].nOffsetLow = (nDescOffset & 0xFFFFFFFF);
-		pDescItems[i].nSize = nDescItems << DESC_BITSHIFT;
-		i++;
-
+		desc_item_t* pDescItems = pDescBase;
 		int64_t nOffset = 0;
 		int64_t nSizeLeft = nDstBufSize;
-		for(int j = 0;j < nDescItems;j++) {
+		while(true) {
 			int nSize = (nSizeLeft > PAGE_SIZE ? PAGE_SIZE : nSizeLeft);
 
-			pDescItems[i].nOffsetHigh = ((nOffset >> 32) & 0xFFFFFFFF);
-			pDescItems[i].nOffsetLow = (nOffset & 0xFFFFFFFF);
-			pDescItems[i].nSize = nSize;
+			pDescItems->nOffsetHigh = ((nOffset >> 32) & 0xFFFFFFFF);
+			pDescItems->nOffsetLow = (nOffset & 0xFFFFFFFF);
+			pDescItems->nSize = nSize;
+			pDescItems++;
 
 			nOffset += nSize;
 			nSizeLeft -= nSize;
-			i++;
-		}
 
-		nDescItemCount = i;
+			if(nSizeLeft <= 0) {
+				pDescItems->nOffsetHigh = 0;
+				pDescItems->nOffsetLow = 0;
+				pDescItems->nSize = 0;
+				break;
+			}
+
+			int64_t nDescOffset = (int64_t)((uintptr_t)&pDescItems[1] - (uintptr_t)pDescBase);
+			pDescItems->nOffsetHigh = ((nDescOffset >> 32) & 0xFFFFFFFF);
+			pDescItems->nOffsetLow = (nDescOffset & 0xFFFFFFFF);
+			pDescItems->nSize = nDescItemCount;
+
+			pDescItems++;
+		}
 	}
 
 #if 1
 	aximm_test1(
-		pDescItems,
+		pDescBase,
 		nDescItemCount,
 		(ap_uint<DST_PTR_WIDTH>*)pDstBuf,
 		nStride,

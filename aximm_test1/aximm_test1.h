@@ -23,7 +23,7 @@
 struct desc_item_t {
 	ap_int<32> nOffsetHigh;
 	ap_uint<32> nOffsetLow;
-	ap_uint<32> nSize;
+	ap_uint<32> nSize; // bytes or items
 	ap_uint<32> nFlags;
 };
 typedef hls::stream<desc_item_t> desc_item_stream_t;

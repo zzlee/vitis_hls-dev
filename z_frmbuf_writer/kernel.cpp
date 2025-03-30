@@ -85,31 +85,20 @@ void desc_item_to_strm(
 	ap_uint<32> nDescItemCount,
 	page_info_stream_t& strmPageInfo) {
 	ap_int<64> nDescOffset = 0;
+	ap_uint<32> nItems = nDescItemCount;
 
 #ifndef __SYNTHESIS__
 	std::cout << __FUNCTION__ << ": ++++" << std::endl;
 #endif
 
-loop_desc_item:
-	for(ap_uint<32> i = 0;i < nDescItemCount;) {
-		// read desc header
-		pDescItem.read_request(nDescOffset >> DESC_BITSHIFT, 1);
-		desc_item_t oDescHeader = pDescItem.read();
-		nDescOffset = offset_from_desc_item(oDescHeader);
-
-#ifndef __SYNTHESIS__
-		std::cout << "d[" << i << "] +" << nDescOffset << " size=" << oDescHeader.nSize << std::endl;
-#endif
-
-		i++;
-
-		// read desc items
-		pDescItem.read_request(nDescOffset >> DESC_BITSHIFT, oDescHeader.nSize >> DESC_BITSHIFT);
-		ap_uint<32> nItems = (oDescHeader.nSize >> DESC_BITSHIFT);
-
+loop_all_desc_items:
+	while(nItems > 0) {
+#pragma HLS PIPELINE
+		pDescItem.read_request(nDescOffset >> DESC_BITSHIFT, nItems + 1);
 
 loop_desc_item_pages:
-		for(ap_uint<32> j = 0;j < nItems;j++) {
+		for(ap_uint<32> i = 0;i < nItems;i++) {
+#pragma HLS PIPELINE
 			desc_item_t oDescItem = pDescItem.read();
 
 			page_info_t oPageInfo = {
@@ -118,26 +107,28 @@ loop_desc_item_pages:
 			};
 
 #ifndef __SYNTHESIS__
-			std::cout << "p[" << (i+j) << "] +" << oPageInfo.nOffset << " size=" << oPageInfo.nSize << std::endl;
+			std::cout << "p[" << i << "] +" << oPageInfo.nOffset << " size=" << oPageInfo.nSize << std::endl;
 #endif
 
 			strmPageInfo << oPageInfo;
 		}
 
-		i += nItems;
-		nDescOffset += nItems << DESC_BITSHIFT;
+		// next desc items
+		desc_item_t oNextDesc = pDescItem.read();
+		nDescOffset = offset_from_desc_item(oNextDesc);
+		nItems = oNextDesc.nSize;
 
 #ifndef __SYNTHESIS__
-		std::cout << "(nDescOffset=" << nDescOffset << ")" << std::endl;
+		std::cout << "(nDescOffset=" << nDescOffset << ", nItems=" << nItems << ")" << std::endl;
 #endif
-}
+	}
 
 #ifndef __SYNTHESIS__
 	std::cout << __FUNCTION__ << ": ----" << std::endl;
 #endif
 }
 
-inline void src_to_luma_chroma(const src_pixel_t& src0, const src_pixel_t& src1, dst_pixel_t& luma, dst_pixel_t& chroma) {
+inline void src0_to_luma_chroma(const src_pixel_t& src0, dst_pixel_t& luma, dst_pixel_t& chroma) {
 	// first 8 tuples
 	for(int i = 0;i < 4;i++) {
 		luma(i*16 + 8*1-1, i*16 + 8*0) = src0(i*60 + 10*1-1, i*60 + 10*0+2); // Y0
@@ -145,7 +136,9 @@ inline void src_to_luma_chroma(const src_pixel_t& src0, const src_pixel_t& src1,
 		chroma(i*16 + 8*1-1, i*16 + 8*0) = (src0(i*60 + 10*2-1, i*60 + 10*1+2) + src0(i*60 + 10*5-1, i*60 + 10*4+2)) >> 1; // (U0 + U1) / 2
 		chroma(i*16 + 8*2-1, i*16 + 8*1) = (src0(i*60 + 10*3-1, i*60 + 10*2+2) + src0(i*60 + 10*6-1, i*60 + 10*5+2)) >> 1; // (V0 + V1) / 2
 	}
+}
 
+inline void src1_to_luma_chroma(const src_pixel_t& src1, dst_pixel_t& luma, dst_pixel_t& chroma) {
 	// next 8 tuples
 	for(int i = 0;i < 4;i++) {
 		luma(4*16+i*16 + 8*1-1, 4*16+i*16 + 8*0) = src1(i*60 + 10*1-1, i*60 + 10*0+2); // Y0
@@ -155,6 +148,11 @@ inline void src_to_luma_chroma(const src_pixel_t& src0, const src_pixel_t& src1,
 	}
 }
 
+inline void src_to_luma_chroma(const src_pixel_t& src0, const src_pixel_t& src1, dst_pixel_t& luma, dst_pixel_t& chroma) {
+	src0_to_luma_chroma(src0, luma, chroma);
+	src1_to_luma_chroma(src0, luma, chroma);
+}
+
 void src_strm_to_luma_chroma(
 	src_pixel_stream_t& strmSrc,
 	dst_pixel_stream_t& strmLuma,
@@ -162,23 +160,21 @@ void src_strm_to_luma_chroma(
 	ap_uint<32> nWidth_16,
 	ap_uint<32> nHeight) {
 	src_pixel_t src[2];
-	dst_pixel_t luma[MAX_WIDTH >> DST_BITSHIFT], chroma[MAX_WIDTH >> DST_BITSHIFT];
+	dst_pixel_t luma, chroma;
 
 loop_height:
 	for (ap_uint<32> i = 0; i < nHeight; i++) {
 loop_width:
 		for (ap_uint<32> j = 0; j < nWidth_16; j++) {
-#pragma HLS PIPELINE II=2
+#pragma HLS PIPELINE
 			strmSrc >> src[0];
+			src0_to_luma_chroma(src[0], luma, chroma);
+
 			strmSrc >> src[1];
+			src1_to_luma_chroma(src[1], luma, chroma);
 
-			src_to_luma_chroma(src[0], src[1], luma[j], chroma[j]);
-		}
-
-loop_width_gen:
-		for (ap_uint<32> j = 0; j < nWidth_16; j++) {
-			strmLuma << luma[j];
-			strmChroma << chroma[j];
+			strmLuma << luma;
+			strmChroma << chroma;
 		}
 	}
 }
@@ -187,9 +183,9 @@ void src_strm_to_mem_v0(
 	dst_pixel_stream_t& strmDst,
 	page_info_stream_t& strmPageInfo,
 	hls::burst_maxi<dst_pixel_t> pDst,
-	ap_uint<32> nDstStride,
 	ap_uint<32> nWidth,
 	ap_uint<32> nHeight,
+	ap_uint<32> nDstStride,
 	ap_uint<32> nFormat) {
 	ap_int<64> nOffset;
 	ap_int<32> nSize = 0;
@@ -201,6 +197,7 @@ void src_strm_to_mem_v0(
 #if 1
 loop_height:
 	for(ap_uint<32> i = 0;i < nHeight;i++) {
+#pragma HLS PIPELINE
 		ap_uint<32> nBytesLeft = nWidth;
 
 #ifndef __SYNTHESIS__
@@ -209,6 +206,7 @@ loop_height:
 
 loop_width:
 		do {
+#pragma HLS PIPELINE
 			if(nSize <= 0) {
 				page_info_t oPageInfo = strmPageInfo.read();
 
@@ -236,6 +234,7 @@ loop_width:
 			pDst.write_request(nOffset >> DST_BITSHIFT, nBurst >> DST_BITSHIFT);
 loop_batch:
 			for(ap_uint<32> j = 0;j < (nBurst >> DST_BITSHIFT);j++) {
+#pragma HLS PIPELINE
 				pDst.write(strmDst.read());
 			}
 			pDst.write_response();
@@ -262,6 +261,36 @@ loop_batch:
 #ifndef __SYNTHESIS__
 	std::cout << __FUNCTION__ << ": ----" << std::endl;
 #endif
+}
+
+void src_strm_consume(
+	src_pixel_stream_t& strmSrc,
+	ap_uint<32> nWidth_8,
+	ap_uint<32> nHeight) {
+	src_pixel_t src;
+
+loop_height:
+	for (ap_uint<32> i = 0; i < nHeight; i++) {
+loop_width:
+		for (ap_uint<32> j = 0; j < nWidth_8; j++) {
+			strmSrc >> src;
+		}
+	}
+}
+
+void dst_strm_consume(
+	dst_pixel_stream_t& strmDst,
+	ap_uint<32> nWidth_16,
+	ap_uint<32> nHeight) {
+	dst_pixel_t dst;
+
+loop_height:
+	for (ap_uint<32> i = 0; i < nHeight; i++) {
+loop_width:
+		for (ap_uint<32> j = 0; j < nWidth_16; j++) {
+			strmDst >> dst;
+		}
+	}
 }
 
 void z_frmbuf_writer(
@@ -325,11 +354,31 @@ void z_frmbuf_writer(
 
 #pragma HLS DATAFLOW
 	src_axis_to_strm(strmSrcAxi, strmSrc, nWidth_8, nHeight, strmAxisRes);
+
+#if 1
 	src_strm_to_luma_chroma(strmSrc, strmLuma, strmChroma, nWidth_16, nHeight);
 	desc_item_to_strm(pDescLuma, nDescLumaCount, strmLumaPageInfo);
 	desc_item_to_strm(pDescChroma, nDescChromaCount, strmChromaPageInfo);
 	src_strm_to_mem_v0(strmLuma, strmLumaPageInfo, pDstLuma, nWidth, nHeight, nDstLumaStride, nFormat);
-	src_strm_to_mem_v0(strmChroma, strmChromaPageInfo, pDstChroma, nWidth, nHeight, nDstLumaStride, nFormat);
+	src_strm_to_mem_v0(strmChroma, strmChromaPageInfo, pDstChroma, nWidth, nHeight, nDstChromaStride, nFormat);
+#endif
+
+#if 0
+	src_strm_consume(strmSrc, nWidth_8, nHeight);
+#endif
+
+#if 0
+	src_strm_to_luma_chroma(strmSrc, strmLuma, strmChroma, nWidth_16, nHeight);
+	dst_strm_consume(strmLuma, nWidth_16, nHeight);
+	dst_strm_consume(strmChroma, nWidth_16, nHeight);
+#endif
+
+#if 0
+	src_strm_to_luma_chroma(strmSrc, strmLuma, strmChroma, nWidth_16, nHeight);
+	src_strm_to_mem_v0(strmLuma, strmLumaPageInfo, pDstLuma, nWidth, nHeight, nDstLumaStride, nFormat);
+	dst_strm_consume(strmChroma, nWidth_16, nHeight);
+#endif
+
 	strmAxisRes.read(nAxisRes);
 
 #ifndef __SYNTHESIS__

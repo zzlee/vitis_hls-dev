@@ -8,63 +8,208 @@
 
 #include "aximm_test0.h"
 
-void aximm_test0(
-	dst_pixel_t* pDstY0,
-	dst_pixel_t* pDstUV0,
-	dst_pixel_t* pDstY1,
-	dst_pixel_t* pDstUV1,
-	ap_uint<32> nDstStrideY,
-	ap_uint<32> nDstStrideUV,
-	ap_uint<32> nWidth,
-	ap_uint<32> nHeight,
-	ap_uint<32> nControl) {
-#pragma HLS INTERFACE m_axi port=pDstY0 offset=slave bundle=mm_video0
-#pragma HLS INTERFACE m_axi port=pDstUV0 offset=slave bundle=mm_video0
-#pragma HLS INTERFACE m_axi port=pDstY1 offset=slave bundle=mm_video0
-#pragma HLS INTERFACE m_axi port=pDstUV1 offset=slave bundle=mm_video0
-#pragma HLS INTERFACE s_axilite port=nDstStrideY
-#pragma HLS INTERFACE s_axilite port=nDstStrideUV
-#pragma HLS INTERFACE s_axilite port=nWidth
-#pragma HLS INTERFACE s_axilite port=nHeight
-#pragma HLS INTERFACE s_axilite port=nControl
-#pragma HLS INTERFACE s_axilite port=return
+void data_gen(
+	ap_uint<32> nSize,
+	ap_uint<32> nTimes,
+	dst_pixel_stream_t& strmDstPxl) {
+	ap_uint<32> nSizePC = nSize >> DST_BITSHIFT;
+	int s = 0;
 
-	ap_uint<32> nWidthPC = nWidth >> DST_BITSHIFT;
-	ap_uint<32> nWidth_2 = (nWidth >> 1);
-	ap_uint<32> nHeight_2 = (nHeight >> 1);
-	ap_uint<32> nDstYSkip = (nDstStrideY >> DST_BITSHIFT) - nWidthPC;
-	ap_uint<32> nDstUVSkip = (nDstStrideUV >> DST_BITSHIFT) - nWidthPC;
+#ifndef __SYNTHESIS__
+	std::cout << __FUNCTION__ << ": ++++" << std::endl;
+#endif
+
+loop_times:
+	for(ap_uint<32> i = 0;i < nTimes;i++) {
+
+#ifndef __SYNTHESIS__
+		std::cout << "[" << i << "] ";
+#endif
+
+loop_burst:
+		for(ap_uint<32> j = 0;j < nSizePC;j++) {
+#pragma HLS PIPELINE II=1
+			dst_pixel_t oDstPxl;
+			for(ap_uint<8> t = 0;t < XF_NPIXPERCYCLE(DST_NPPC);t++) {
+				oDstPxl(8*(t+1)-1, 8*t) = s + t;
+			}
+			s += XF_NPIXPERCYCLE(DST_NPPC);
+
+#ifndef __SYNTHESIS__
+			std::cout << std::hex << std::setw(16) << oDstPxl << ' ';
+#endif
+
+			strmDstPxl << oDstPxl;
+		}
+
+#ifndef __SYNTHESIS__
+		std::cout << std::dec << std::endl;
+#endif
+	}
+
+#ifndef __SYNTHESIS__
+	std::cout << __FUNCTION__ << ": ----" << std::endl;
+#endif
+}
+
+void fill_data_times_v0(
+	dst_pixel_stream_t& strmDstPxl,
+	ap_uint<32> nSize,
+	ap_uint<32> nTimes,
+	hls::burst_maxi<dst_pixel_t> pDstPxl) {
+	ap_uint<32> nSizePC = nSize >> DST_BITSHIFT;
+
+#ifndef __SYNTHESIS__
+	std::cout << __FUNCTION__ << ": ++++" << std::endl;
+#endif
+
+loop_times:
+	for(ap_uint<32> i = 0;i < nTimes;i++) {
+
+#ifndef __SYNTHESIS__
+		std::cout << "[" << i << "] ";
+#endif
+
+		pDstPxl.write_request(0, nSizePC);
+loop_burst:
+		for(ap_uint<32> j = 0;j < nSizePC;j++) {
+#pragma HLS PIPELINE
+			pDstPxl.write(strmDstPxl.read());
+		}
+		pDstPxl.write_response();
+
+#ifndef __SYNTHESIS__
+		std::cout << std::dec << std::endl;
+#endif
+	}
+
+#ifndef __SYNTHESIS__
+	std::cout << __FUNCTION__ << ": ----" << std::endl;
+#endif
+}
+
+void fill_data_times_v1(
+	dst_pixel_stream_t& strmDstPxl,
+	ap_uint<32> nSize,
+	ap_uint<32> nTimes,
+	dst_pixel_t* pDstPxl) {
+	ap_uint<32> nSizePC = nSize >> DST_BITSHIFT;
+	dst_pixel_t pBuf[MAX_WIDTH >> DST_BITSHIFT];
+
+#ifndef __SYNTHESIS__
+	std::cout << __FUNCTION__ << ": ++++" << std::endl;
+#endif
+
+loop_preload:
+	for(ap_uint<32> i = 0;i < nTimes;i++) {
+loop_burst:
+		for(ap_uint<32> j = 0;j < nSizePC;j++) {
+			strmDstPxl >> pBuf[j];
+		}
+
+		memcpy(pDstPxl, pBuf, nSize);
+	}
+
+#ifndef __SYNTHESIS__
+	std::cout << __FUNCTION__ << ": ----" << std::endl;
+#endif
+}
+
+void fill_data_times_v2(
+	dst_pixel_stream_t& strmDstPxl,
+	ap_uint<32> nSize,
+	ap_uint<32> nTimes,
+	dst_pixel_t* pDstPxl) {
+	ap_uint<32> nSizePC = nSize >> DST_BITSHIFT;
+
+#ifndef __SYNTHESIS__
+	std::cout << __FUNCTION__ << ": ++++" << std::endl;
+#endif
+
+loop_preload:
+	for(ap_uint<32> i = 0;i < nTimes;i++) {
+loop_burst:
+		for(ap_uint<32> j = 0;j < nSizePC;j++) {
+			strmDstPxl >> pDstPxl[j];
+		}
+	}
+
+#ifndef __SYNTHESIS__
+	std::cout << __FUNCTION__ << ": ----" << std::endl;
+#endif
+}
+
+void data_consume(
+	dst_pixel_stream_t& strmDstPxl,
+	ap_uint<32> nSize,
+	ap_uint<32> nTimes) {
+	ap_uint<32> nSizePC = nSize >> DST_BITSHIFT;
+	int s = 0;
+
+#ifndef __SYNTHESIS__
+	std::cout << __FUNCTION__ << ": ++++" << std::endl;
+#endif
+
+loop_times:
+	for(ap_uint<32> i = 0;i < nTimes;i++) {
+
+#ifndef __SYNTHESIS__
+		std::cout << "[" << i << "] ";
+#endif
+
+loop_burst:
+		for(ap_uint<32> j = 0;j < nSizePC;j++) {
+			dst_pixel_t oDstPxl = strmDstPxl.read();
+
+#ifndef __SYNTHESIS__
+			std::cout << std::hex << std::setw(16) << oDstPxl << ' ';
+#endif
+		}
+
+#ifndef __SYNTHESIS__
+		std::cout << std::dec << std::endl;
+#endif
+	}
+
+#ifndef __SYNTHESIS__
+	std::cout << __FUNCTION__ << ": ----" << std::endl;
+#endif
+}
+
+void aximm_test0(
+	dst_pixel_t* pDstPxl,
+	ap_uint<32> nSize,
+	ap_uint<32> nTimes) {
+#pragma HLS INTERFACE m_axi port=pDstPxl offset=slave bundle=mm_video
+#pragma HLS INTERFACE s_axilite port=nSize
+#pragma HLS INTERFACE s_axilite port=nTimes
+#pragma HLS INTERFACE s_axilite port=return
 
 #ifndef __SYNTHESIS__
 	std::cout << __FUNCTION__ << std::endl;
-	std::cout << "SRC_WORD_WIDTH=" << SRC_WORD_WIDTH << std::endl;
 	std::cout << "DST_PTR_WIDTH=" << DST_PTR_WIDTH << std::endl;
-	std::cout << "SRC_BITSHIFT=" << SRC_BITSHIFT << std::endl;
 	std::cout << "DST_BITSHIFT=" << DST_BITSHIFT << std::endl;
-	std::cout << "DST_TO_SRC_NPPC=" << DST_TO_SRC_NPPC << std::endl;
-	std::cout << nWidth << 'x' << nHeight << ',' << nDstStrideY << ',' << nDstStrideUV << std::endl;
-	std::cout << nWidthPC << 'x' << nHeight_2 << ',' << nDstYSkip << ',' << nDstUVSkip << std::endl;
+	std::cout << nSize << 'x' << nTimes << std::endl;
 #endif
 
-	ap_uint<32> nPos_dstY0 = 0, nPos_dstY1 = 0, nPos_dstUV0 = 0, nPos_dstUV1 = 0;
+	dst_pixel_stream_t strmDstPxl("strmDstPxl");
 
-loop_height:
-	for (ap_uint<32> i = 0; i < nHeight_2;i++, nPos_dstY0 += nDstYSkip, nPos_dstY1 += nDstYSkip, nPos_dstUV0 += nDstUVSkip, nPos_dstUV1 += nDstUVSkip) {
+#pragma HLS DATAFLOW
+	data_gen(nSize, nTimes, strmDstPxl);
 
-loop_width_even:
-		for (ap_uint<32> j = 0;j < nWidthPC;j++, nPos_dstY0++, nPos_dstUV0++) {
-#pragma HLS PIPELINE II=2
+#if 0
+	fill_data_times_v0(strmDstPxl, nSize, nTimes, pDstPxl);
+#endif
 
-			pDstY0[nPos_dstY0] = dst_pixel_t(i) << 24 | dst_pixel_t(j);
-			pDstUV0[nPos_dstUV0] = dst_pixel_t(i) << 24 | dst_pixel_t(j);
-		}
+#if 0
+	data_consume(strmDstPxl, nSize, nTimes);
+#endif
 
-loop_width_odd:
-		for (ap_uint<32> j = 0;j < nWidthPC;j++, nPos_dstY1++, nPos_dstUV1++) {
-#pragma HLS PIPELINE II=2
+#if 0
+	fill_data_times_v1(strmDstPxl, nSize, nTimes, pDstPxl);
+#endif
 
-			pDstY1[nPos_dstY1] = dst_pixel_t(nHeight_2 + i) << 24 | dst_pixel_t(j);
-			pDstUV1[nPos_dstUV1] = dst_pixel_t(nHeight_2 + i) << 24 | dst_pixel_t(j);
-		}
-	}
+#if 1
+	fill_data_times_v2(strmDstPxl, nSize, nTimes, pDstPxl);
+#endif
 }

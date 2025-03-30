@@ -11,9 +11,10 @@ add_files -tb aximm_test0/tb.cpp -cflags "-I${XF_PROJ_ROOT}/L1/include -I ./ -D_
 
 # 2020.2
 open_solution "solution1" -flow_target vivado
-set_part {xczu4ev-fbvb900-2-e}
+# set_part {xczu4ev-fbvb900-2-e}
+set_part {xc7a50tcsg325-2}
 
-create_clock -period 3.33333 -name default
+create_clock -period 8 -name default
 csynth_design
 export_design -format ip_catalog -description "AXIMM Test0" -vendor "YUAN" -display_name "AXIMM Test0"
 exit
